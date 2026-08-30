@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Device - RAT</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #0a0015; min-height: 100vh; padding: 20px; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #1a0030, #2d004d);
+            border-radius: 16px;
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            margin-bottom: 24px;
+        }
+        .header h1 { color: #a855f7; font-size: 24px; }
+        .header a { color: #c4b5d4; text-decoration: none; padding: 8px 20px; border-radius: 8px; background: rgba(168,85,247,0.2); }
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .ctrl-card {
+            background: linear-gradient(145deg, #1a0030, #2d004d);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .ctrl-card:hover { border-color: #a855f7; transform: scale(1.02); box-shadow: 0 0 30px rgba(168,85,247,0.2); }
+        .ctrl-card .icon { font-size: 36px; }
+        .ctrl-card .label { color: #d8b4fe; margin-top: 8px; font-size: 14px; }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: #1a0030;
+            border: 2px solid rgba(168,85,247,0.4);
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal-content h3 { color: #a855f7; margin-bottom: 16px; }
+        .modal-content input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: 2px solid rgba(168,85,247,0.3);
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            margin-bottom: 12px;
+        }
+        .modal-content button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+            color: #fff;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .modal-content .close {
+            float: right;
+            color: #6b5b7b;
+            cursor: pointer;
+            font-size: 24px;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1a0030;
+            border: 1px solid #a855f7;
+            border-radius: 12px;
+            padding: 16px 24px;
+            color: #d8b4fe;
+            display: none;
+        }
+        .toast.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎮 {{ device.name }}</h1>
+        <a href="/">⬅ Back</a>
+    </div>
+
+    <div class="controls-grid">
+        <div class="ctrl-card" onclick="sendCommand('LOCK')">
+            <div class="icon">🔒</div>
+            <div class="label">Lock Screen</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('UNLOCK')">
+            <div class="icon">🔓</div>
+            <div class="label">Unlock Screen</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('CAMERA')">
+            <div class="icon">📷</div>
+            <div class="label">Open Camera</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('GALLERY')">
+            <div class="icon">🖼️</div>
+            <div class="label">Open Gallery</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('FILES')">
+            <div class="icon">📁</div>
+            <div class="label">Open Files</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('SETTINGS')">
+            <div class="icon">⚙️</div>
+            <div class="label">Open Settings</div>
+        </div>
+        <div class="ctrl-card" onclick="sendCommand('MIRROR')">
+            <div class="icon">🪞</div>
+            <div class="label">Mirror</div>
+        </div>
+        <div class="ctrl-card" onclick="showLockModal()">
+            <div class="icon">🔐</div>
+            <div class="label">Custom Lock</div>
+        </div>
+    </div>
+
+    <div class="modal" id="lockModal">
+        <div class="modal-content">
+            <span class="close" onclick="closeLockModal()">&times;</span>
+            <h3>🔐 Custom Lock</h3>
+            <input type="password" id="lockPassword" placeholder="Password">
+            <button onclick="sendCustomLock()">Lock</button>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const deviceId = "{{ device_id }}";
+        const socket = io();
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function sendCommand(command, data = {}) {
+            fetch('/api/device/' + deviceId + '/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: command, data: data })
+            }).then(res => res.json()).then(res => {
+                showToast('✅ Command ' + command + ' sent!');
+            }).catch(() => showToast('❌ Failed to send command'));
+        }
+
+        function showLockModal() {
+            document.getElementById('lockModal').classList.add('active');
+        }
+        function closeLockModal() {
+            document.getElementById('lockModal').classList.remove('active');
+        }
+        function sendCustomLock() {
+            const pass = document.getElementById('lockPassword').value;
+            if (!pass) { alert('Masukkan password!'); return; }
+            sendCommand('CUSTOM_LOCK', { password: pass });
+            closeLockModal();
+        }
+
+        socket.on('connect', function() {
+            console.log('Connected to server');
+        });
+
+        socket.on('new_command', function(data) {
+            if (data.device_id === deviceId) {
+                showToast('📨 Command received: ' + data.command.command);
+            }
+        });
+    </script>
+
+    <!-- DI BAGIAN BAWAH SEBELUM </body> -->
+    <script src="/static/js/script.js"></script>
+    <script>
+        const deviceId = "{{ device_id }}";
+        setupDeviceControl(deviceId);
+    </script>
+</body>
+</html>
